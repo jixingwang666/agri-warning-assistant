@@ -1,7 +1,12 @@
 import sys
+from pathlib import Path
 
-from db import initialize_schema
-from pipeline import rebuild_from_demo_data
+_CURRENT_DIR = Path(__file__).resolve().parent
+if str(_CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_CURRENT_DIR))
+
+from db import initialize_schema  # noqa: E402
+from pipeline import rebuild_from_demo_data  # noqa: E402
 
 
 if hasattr(sys.stdout, "reconfigure"):

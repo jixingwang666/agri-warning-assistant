@@ -29,6 +29,31 @@ def detect_risk_type_and_words(text: str) -> tuple[str, list[str], int]:
     return best_type, best_words, best_score
 
 
+def detect_risk_type_hybrid(title: str, content: str) -> tuple[str, list[str], float]:
+    """Detect risk type with optional LLM enhancement.
+
+    LLM-first: if LLM returns a high-confidence result, use its keywords.
+    Falls back to rule-based keyword matching on failure.
+    """
+    # Try LLM first
+    try:
+        from llm_classifier import detect_risk_type_with_llm  # noqa: F811
+        result = detect_risk_type_with_llm(title, content)
+        if result and result.get("confidence", 0) >= 0.7:
+            risk_type = result.get("risk_type", "综合风险")
+            keywords = result.get("matched_keywords", [])
+            if risk_type in RISK_KEYWORDS or risk_type == "综合风险":
+                base = RISK_KEYWORDS.get(risk_type, {}).get("base_score", 8)
+                score = base + len(keywords) * 7
+                return risk_type, keywords, float(score)
+    except Exception:
+        pass
+
+    # Fall back to rules
+    text = f"{title} {content}"
+    return detect_risk_type_and_words(text)
+
+
 def risk_level(score: float) -> str:
     if score >= 81:
         return "高风险"
@@ -52,6 +77,7 @@ def score_news_item(
     price_changes: dict[tuple[str, str], dict],
 ) -> dict:
     title = item.get("title", "")
+    content = item.get("content", "")
     summary = item.get("summary", "")
     keywords = item.get("keywords", "")
     region = item.get("region", "")
@@ -59,7 +85,8 @@ def score_news_item(
     text = f"{title} {summary} {keywords}"
 
     product = detect_product(text)
-    risk_type, trigger_words, keyword_score = detect_risk_type_and_words(text)
+    # Hybrid risk detection: LLM → rules fallback
+    risk_type, trigger_words, keyword_score = detect_risk_type_hybrid(title, content)
 
     heat_score = min(max(category_counter.get(category, 0) - 1, 0) * 5, 15)
     region_score = min(max(region_counter.get(region, 0) - 1, 0) * 4, 12)
