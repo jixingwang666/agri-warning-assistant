@@ -20,7 +20,7 @@ def build_reason(record: dict) -> str:
     return reason
 
 
-def generate_warnings(news_items: list[dict], price_changes: dict[tuple[str, str], dict]) -> list[dict]:
+def generate_warnings(news_items: list[dict], price_changes: dict[tuple[str, str], dict], use_llm: bool = True) -> list[dict]:
     category_counter, region_counter = build_context_scores(news_items)
     warnings = []
     for item in news_items:
@@ -31,6 +31,15 @@ def generate_warnings(news_items: list[dict], price_changes: dict[tuple[str, str
         )
         record.pop("price_signal", None)
         warnings.append(record)
+
+    # LLM enrichment: replace template reason/suggestion with context-aware LLM output
+    if use_llm:
+        try:
+            from llm_enricher import enrich_warnings_batch  # noqa: F811
+            warnings = enrich_warnings_batch(warnings)
+        except Exception:
+            pass  # graceful fallback — keep rule-based output
+
     return sorted(warnings, key=lambda row: row["risk_score"], reverse=True)
 
 

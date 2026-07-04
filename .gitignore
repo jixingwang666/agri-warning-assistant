@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+
+# Secrets - NEVER commit API keys
+secrets.env
+*.secret
+*.secrets
+
+# Environment (keep .env template but secrets.env is blocked above)
+# .env is committed as a template (no real secrets in it)
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (too large)
+text_analysis/models/
+text_analysis/training_data/
+text_analysis/agrichn_dataset/
+
+# Output / temp
+output/
+tmp/
+*.log
