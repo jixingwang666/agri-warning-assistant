@@ -60,6 +60,8 @@
           </div>
           <div class="actions">
             <button class="secondary" @click="refreshAll">刷新</button>
+            <input class="keyword-input" v-model="searchKeywords" placeholder="关键词(留空自动生成)" />
+            <button class="primary" :disabled="loading" @click="searchCrawl">{{ loading ? '采集中' : '关键词搜索采集' }}</button>
             <button class="primary" :disabled="loading" @click="crawlNews">{{ loading ? '更新中' : '立即更新新闻' }}</button>
             <button class="secondary" @click="logout">退出</button>
           </div>

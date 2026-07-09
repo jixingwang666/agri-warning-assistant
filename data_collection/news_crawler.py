@@ -76,6 +76,53 @@ class NewsCrawler:
                 continue
         return items
 
+    def crawl_by_queries(
+        self,
+        queries: list[dict],
+        engine,
+        limit_per_query: int = 5,
+    ) -> CrawlResult:
+        """关键词反向爬取：关键词 → 搜索引擎 → 真实文章URL → 抓正文。
+
+        queries: [{"query": str, "region": str, "risk_type": str}, ...]
+            由 keyword_query.build_search_queries / parse_manual_keywords 生成。
+        engine: search_engines.SearchEngine 实例（默认百度）。
+        复用 fetch_detail 抓正文，按真实 URL 去重，单个 query 失败不中断整批。
+        """
+        items: list[dict] = []
+        errors: list[str] = []
+        seen_urls: set[str] = set()
+
+        for spec in queries:
+            query = spec.get("query", "")
+            region = spec.get("region", "")
+            if not query:
+                continue
+            try:
+                results = engine.search(query, limit=limit_per_query)
+            except Exception as exc:  # 单个查询失败不影响其余查询。
+                errors.append(f"{query}: {exc}")
+                continue
+
+            for url, title in results:
+                if url in seen_urls:
+                    continue
+                if not self._is_probable_news_link(title, url):
+                    continue
+                seen_urls.add(url)
+                try:
+                    source = {"name": _domain_of(url), "region": region, "category": ""}
+                    item = self.fetch_detail(url, source)
+                    if not item["title"]:
+                        item["title"] = title
+                    if not item.get("region"):
+                        item["region"] = region
+                    items.append(item)
+                except Exception:
+                    continue
+        return CrawlResult(items=items, errors=errors)
+
+
     def fetch_detail(self, url: str, source: dict) -> dict:
         import requests
         from bs4 import BeautifulSoup
@@ -145,3 +192,13 @@ class NewsCrawler:
 
 def re_search_chinese(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _domain_of(url: str) -> str:
+    """\u4ece URL \u53d6\u57df\u540d\u4f5c\u4e3a\u6765\u6e90\u540d\uff08\u641c\u7d22\u91c7\u96c6\u65f6\u6ca1\u6709\u9884\u8bbe source \u540d\uff09\u3002"""
+    from urllib.parse import urlparse
+
+    try:
+        return urlparse(url).netloc or "\u641c\u7d22\u91c7\u96c6"
+    except Exception:
+        return "\u641c\u7d22\u91c7\u96c6"

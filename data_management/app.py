@@ -13,6 +13,7 @@ from config import LOGIN_PASSWORD, LOGIN_USER  # noqa: E402
 from db import initialize_schema  # noqa: E402
 from dedup import deduplicate_news  # noqa: E402
 from importers import import_news  # noqa: E402
+from keyword_query import build_search_queries, parse_manual_keywords  # noqa: E402
 from news_crawler import NewsCrawler  # noqa: E402
 from pipeline import rebuild_from_demo_data  # noqa: E402
 from queries import (  # noqa: E402
@@ -26,7 +27,15 @@ from queries import (  # noqa: E402
     price_trend,
 )
 from repository import insert_news, insert_warnings  # noqa: E402
-from sources import NEWS_SOURCES  # noqa: E402
+from search_engines import build_engine_chain  # noqa: E402
+from sources import (  # noqa: E402
+    MAX_QUERIES,
+    NEWS_SOURCES,
+    SEARCH_DELAY,
+    SEARCH_ENGINE,
+    SEARCH_ENGINE_FALLBACKS,
+    SEARCH_LIMIT_PER_QUERY,
+)
 
 sys.path.insert(0, str(CURRENT_DIR.parent / "text_analysis"))
 sys.path.insert(0, str(CURRENT_DIR.parent / "risk_warning"))
@@ -76,7 +85,40 @@ def rebuild_pipeline():
 def crawl_update(limit_per_source: int = 5):
     crawler = NewsCrawler(timeout=12)
     result = crawler.crawl_sources(NEWS_SOURCES, limit_per_source=limit_per_source)
-    news = deduplicate_news(result.items)
+    return _ingest_news_items(result.items, errors=result.errors, message="crawl finished")
+
+
+@app.post("/api/crawl/search")
+def crawl_search(limit_per_query: int = 5, keywords: str = ""):
+    """关键词反向爬取：关键词 → 搜索引擎 → 抓正文 → 分析 → 预警 → 入库。
+
+    keywords 为空时用内置词表自动生成查询；否则用用户传入的关键词。
+    """
+    if keywords.strip():
+        queries = parse_manual_keywords(keywords)
+    else:
+        queries = build_search_queries(max_queries=MAX_QUERIES)
+
+    engine = build_engine_chain(
+        SEARCH_ENGINE, SEARCH_ENGINE_FALLBACKS, timeout=12, delay=SEARCH_DELAY
+    )
+    crawler = NewsCrawler(timeout=12)
+    result = crawler.crawl_by_queries(
+        queries, engine, limit_per_query=limit_per_query or SEARCH_LIMIT_PER_QUERY
+    )
+    return _ingest_news_items(
+        result.items, errors=result.errors, message="search crawl finished"
+    )
+
+
+def _ingest_news_items(
+    items: list[dict], errors: list | None = None, message: str = "crawl finished"
+) -> dict:
+    """采集后的公共下游管线：去重 → 分析 → 价格 → 预警 → 入库。
+
+    被列表页采集(/api/crawl/update)和关键词反向爬取(/api/crawl/search)共用。
+    """
+    news = deduplicate_news(items)
     analyzed_news = analyze_news_batch(news)
 
     news_rows = []
@@ -116,11 +158,11 @@ def crawl_update(limit_per_source: int = 5):
     inserted_news = insert_news(news_rows)
     inserted_warnings = insert_warnings(warnings)
     return {
-        "message": "crawl finished",
+        "message": message,
         "crawled": len(news),
         "news_saved": inserted_news,
         "warnings_saved": inserted_warnings,
-        "errors": result.errors,
+        "errors": errors or [],
     }
 
 
