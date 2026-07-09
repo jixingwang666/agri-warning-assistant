@@ -1,5 +1,7 @@
 from collections import Counter
+import json
 
+from henan_scope import crop_region_bonus, is_henan_related, source_credibility
 from price_monitor import find_price_signal
 from risk_rules import POSITIVE_OR_STABLE_WORDS, PRODUCT_KEYWORDS, RISK_KEYWORDS
 
@@ -82,28 +84,62 @@ def score_news_item(
     keywords = item.get("keywords", "")
     region = item.get("region", "")
     category = item.get("category", "")
-    text = f"{title} {summary} {keywords}"
+    text = f"{title} {content} {summary} {keywords}"
 
     product = detect_product(text)
     # Hybrid risk detection: LLM → rules fallback
     risk_type, trigger_words, keyword_score = detect_risk_type_hybrid(title, content)
 
     heat_score = min(max(category_counter.get(category, 0) - 1, 0) * 5, 15)
-    region_score = min(max(region_counter.get(region, 0) - 1, 0) * 4, 12)
+    region_cluster_score = min(max(region_counter.get(region, 0) - 1, 0) * 4, 12)
+    local_match_score = crop_region_bonus(product, region)
+    source_score = source_credibility(item.get("source", ""))
+    region_score = min(region_cluster_score + local_match_score + source_score, 20)
 
     price_signal = find_price_signal(product, region, price_changes)
     price_score = float(price_signal.get("score", 0))
     if price_score and "价格" not in trigger_words:
         trigger_words.append("价格波动")
 
+    evidence_score = float(item.get("evidence_score", 0) or 0)
+    evidence_summary = item.get("evidence_summary", "")
+    evidence_links = item.get("evidence_links", "")
+    if price_signal and price_signal.get("source_url"):
+        try:
+            links = json.loads(evidence_links or "[]")
+            if not isinstance(links, list):
+                links = []
+        except json.JSONDecodeError:
+            links = []
+        links.append(
+            {
+                "type": "price",
+                "name": price_signal.get("source") or price_signal.get("market_name") or "价格数据来源",
+                "url": price_signal.get("source_url", ""),
+                "note": f"结构化价格信号：{price_signal.get('match_level', '价格匹配')}",
+                "score": round(price_score, 1),
+            }
+        )
+        evidence_links = json.dumps(links, ensure_ascii=False)
+
     positive_adjustment = 0
     if any(word in text for word in POSITIVE_OR_STABLE_WORDS):
         positive_adjustment = 18
 
     total_score = min(
-        max(round(keyword_score + price_score + heat_score + region_score - positive_adjustment, 1), 0),
+        max(round(keyword_score + price_score + heat_score + region_score + evidence_score - positive_adjustment, 1), 0),
         100,
     )
+    evidence_count = sum(
+        [
+            bool(trigger_words),
+            bool(price_signal),
+            evidence_score > 0,
+            local_match_score > 0,
+            is_henan_related(region, title, summary, keywords),
+        ]
+    )
+    confidence = min(45 + evidence_count * 10 + source_score * 2 + evidence_score * 1.2, 100)
 
     return {
         "title": title,
@@ -116,6 +152,18 @@ def score_news_item(
         "price_score": round(price_score, 1),
         "heat_score": round(heat_score, 1),
         "region_score": round(region_score, 1),
+        "local_match_score": round(local_match_score, 1),
+        "source_score": round(source_score, 1),
+        "evidence_score": round(evidence_score, 1),
+        "confidence": round(confidence, 1),
+        "evidence_summary": ";".join(
+            part for part in [
+                f"证据数:{evidence_count}",
+                f"价格匹配:{price_signal.get('match_level', '无')}",
+                evidence_summary,
+            ] if part
+        ),
+        "evidence_links": evidence_links,
         "positive_adjustment": round(positive_adjustment, 1),
         "trigger_words": "、".join(trigger_words) if trigger_words else "未发现明显风险词",
         "url": item.get("url", ""),

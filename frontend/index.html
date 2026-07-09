@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>本地农业舆情与风险预警助手</title>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260709-price-import" />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
@@ -158,35 +158,126 @@
               </div>
               <p>{{ item.reason }}</p>
               <p class="suggestion">{{ item.suggestion }}</p>
+              <div class="warning-actions">
+                <button type="button" class="secondary" @click.stop="openWarningAnalysis(item)">预警分析</button>
+              </div>
             </article>
           </div>
         </section>
 
         <section v-show="activeView === 'prices'" class="view">
           <div class="filters">
-            <input v-model="priceFilters.product_name" placeholder="农产品名称" @keyup.enter="loadPrices" />
-            <input v-model="priceFilters.region" placeholder="地区" @keyup.enter="loadPrices" />
+            <select v-model="priceFilters.product_name" @change="loadPrices">
+              <option value="">全部农产品</option>
+              <option value="小麦">小麦</option>
+              <option value="玉米">玉米</option>
+              <option value="番茄">番茄</option>
+              <option value="花生">花生</option>
+              <option value="大豆">大豆</option>
+            </select>
+            <select v-model="priceFilters.city" @change="loadPrices">
+              <option>郑州</option>
+              <option>开封</option>
+              <option>洛阳</option>
+              <option>安阳</option>
+              <option>新乡</option>
+              <option>南阳</option>
+              <option>商丘</option>
+              <option>周口</option>
+              <option>驻马店</option>
+              <option>信阳</option>
+            </select>
             <button class="secondary" @click="loadPrices">查询</button>
           </div>
+          <div class="panel price-trend-panel">
+            <h2>{{ priceFilters.city }}价格走势</h2>
+            <div id="pricePageChart" class="chart"></div>
+          </div>
           <div class="table prices">
-            <div class="row head"><span>农产品</span><span>价格</span><span>单位</span><span>地区</span><span>日期</span></div>
+            <div class="row head"><span>农产品</span><span>价格</span><span>单位</span><span>城市</span><span>日期</span></div>
             <div class="row" v-for="item in prices" :key="item.id">
-              <span>{{ item.product_name }}</span><span>{{ item.price }}</span><span>{{ item.unit }}</span><span>{{ item.region }}</span><span>{{ item.date }}</span>
+              <span>{{ item.product_name }}</span><span>{{ item.price }}</span><span>{{ item.unit }}</span><span>{{ item.city || item.region }}</span><span>{{ item.date }}</span>
             </div>
           </div>
         </section>
 
-        <section v-show="activeView === 'import'" class="view">
+        <section v-show="activeView === 'import'" class="view import-grid">
           <div class="panel import-panel">
             <h2>新闻数据导入</h2>
             <input type="file" accept=".csv,.xlsx,.xls" @change="onFileChange" />
-            <button class="primary" :disabled="!uploadFile" @click="uploadNews">解析文件</button>
+            <button class="primary" :disabled="!uploadFile || loading" @click="uploadNews">
+              {{ loading ? '导入中' : '导入并生成预警' }}
+            </button>
             <pre v-if="uploadResult">{{ uploadResult }}</pre>
+          </div>
+          <div class="panel import-panel">
+            <h2>价格数据导入</h2>
+            <input type="file" accept=".csv,.xlsx,.xls" @change="onPriceFileChange" />
+            <button class="primary" :disabled="!priceUploadFile || loading" @click="uploadPrices">
+              {{ loading ? '导入中' : '导入价格并重算预警' }}
+            </button>
+            <p class="hint">字段支持：product_name、price、unit、province、city、market_name、date、source、source_url。</p>
+            <pre v-if="priceUploadResult">{{ priceUploadResult }}</pre>
           </div>
         </section>
       </main>
+      <div v-if="analysisModalOpen" class="modal-backdrop" @click.self="closeWarningAnalysis">
+        <section class="analysis-modal">
+          <header class="modal-header">
+            <div>
+              <h2>预警分析</h2>
+              <p v-if="selectedWarningAnalysis">{{ selectedWarningAnalysis.title }}</p>
+            </div>
+            <button class="secondary" @click="closeWarningAnalysis">关闭</button>
+          </header>
+
+          <div v-if="analysisLoading" class="notice">正在加载预警分析...</div>
+          <div v-else-if="analysisError" class="notice">{{ analysisError }}</div>
+          <div v-else-if="selectedWarningAnalysis" class="analysis-content">
+            <div class="analysis-summary">
+              <article>
+                <span>风险等级</span>
+                <strong>{{ selectedWarningAnalysis.risk_level }}</strong>
+              </article>
+              <article>
+                <span>风险分</span>
+                <strong>{{ selectedWarningAnalysis.risk_score }}</strong>
+              </article>
+              <article>
+                <span>置信度</span>
+                <strong>{{ selectedWarningAnalysis.confidence || 0 }}%</strong>
+              </article>
+            </div>
+
+            <section class="analysis-section">
+              <h3>评分规则与原因</h3>
+              <div class="analysis-score" v-for="part in selectedWarningAnalysis.score_parts" :key="part.name">
+                <div class="score-label">
+                  <span>{{ part.name }}</span>
+                  <strong>{{ part.value }} / {{ part.max }}</strong>
+                </div>
+                <div class="score-track">
+                  <i :style="{width: scoreWidth(part.value, part.max)}"></i>
+                </div>
+                <p>{{ part.reason }}</p>
+                <div v-if="part.links && part.links.length" class="inline-evidence">
+                  <a v-for="link in part.links" :key="part.name + link.name + link.url" :href="link.url" target="_blank" rel="noopener">
+                    {{ link.name }}<span>{{ link.note }}</span>
+                  </a>
+                </div>
+              </div>
+            </section>
+
+            <section class="analysis-section">
+              <h3>综合说明</h3>
+              <p>{{ selectedWarningAnalysis.summary }}</p>
+              <p class="suggestion">{{ selectedWarningAnalysis.suggestion }}</p>
+            </section>
+          </div>
+        </section>
+      </div>
       </template>
     </div>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260709-price-import"></script>
   </body>
 </html>

@@ -1,5 +1,3 @@
-from datetime import date
-
 from repository import fetch_all, fetch_one
 
 
@@ -37,31 +35,50 @@ def list_warnings(risk_level: str = "", region: str = "", product: str = "", lim
     if product:
         sql += " AND product LIKE %s"
         params.append(f"%{product}%")
-    sql += " ORDER BY risk_score DESC, id DESC LIMIT %s"
+    sql += " ORDER BY id DESC LIMIT %s"
     params.append(limit)
     return fetch_all(sql, tuple(params))
 
 
-def list_prices(product_name: str = "", region: str = ""):
-    sql = "SELECT * FROM product_prices WHERE 1=1"
+def get_warning(warning_id: int):
+    return fetch_one("SELECT * FROM warnings WHERE id = %s", (warning_id,))
+
+
+def list_prices(product_name: str = "", region: str = "", city: str = ""):
+    where_sql = "WHERE 1=1"
     params = []
     if product_name:
-        sql += " AND product_name = %s"
+        where_sql += " AND product_name = %s"
         params.append(product_name)
+    if city:
+        where_sql += " AND TRIM(city) = %s"
+        params.append(city)
     if region:
-        sql += " AND region LIKE %s"
+        where_sql += " AND region LIKE %s"
         params.append(f"%{region}%")
-    sql += " ORDER BY product_name, region, date"
+    area_expr = "TRIM(city)" if city else "COALESCE(NULLIF(TRIM(city), ''), region)"
+    sql = f"""
+    SELECT p.id, p.product_name, p.price, p.unit,
+           COALESCE(NULLIF(TRIM(p.city), ''), p.region) AS region,
+           p.province, p.city, p.market_name, p.source_level,
+           LEFT(p.date, 10) AS date, p.source, p.source_url, p.created_at
+    FROM product_prices p
+    JOIN (
+      SELECT product_name, {area_expr} AS area, LEFT(date, 10) AS day_label, MAX(id) AS id
+      FROM product_prices
+      {where_sql}
+      GROUP BY product_name, {area_expr}, LEFT(date, 10)
+    ) latest ON p.id = latest.id
+    ORDER BY latest.day_label DESC, p.id DESC
+    """
     return fetch_all(sql, tuple(params))
 
 
 def overview_stats():
-    today = date.today().isoformat()
     return {
         "news_count": fetch_one("SELECT COUNT(*) AS count FROM news")["count"],
         "today_news_count": fetch_one(
-            "SELECT COUNT(*) AS count FROM news WHERE publish_time = %s",
-            (today,),
+            "SELECT COUNT(*) AS count FROM news WHERE DATE(created_at) = CURDATE()"
         )["count"],
         "warning_count": fetch_one("SELECT COUNT(*) AS count FROM warnings")["count"],
         "high_warning_count": fetch_one(
@@ -77,17 +94,48 @@ def category_chart():
     )
 
 
-def price_trend(product_name: str = ""):
-    sql = """
-    SELECT product_name, region, date, price, unit
-    FROM product_prices
-    WHERE 1=1
-    """
+def price_trend(product_name: str = "", city: str = ""):
     params = []
+    if city:
+        where_sql = "WHERE TRIM(city) = %s"
+        params.append(city)
+        if product_name:
+            where_sql += " AND product_name = %s"
+            params.append(product_name)
+        sql = f"""
+        SELECT p.product_name, p.city AS region, LEFT(p.date, 10) AS date, p.price, p.unit, p.source_url
+        FROM product_prices p
+        JOIN (
+          SELECT product_name, city, LEFT(date, 10) AS day_label, MAX(id) AS id
+          FROM product_prices
+          {where_sql}
+          GROUP BY product_name, city, LEFT(date, 10)
+        ) latest ON p.id = latest.id
+        ORDER BY p.product_name, p.city, latest.day_label
+        """
+        return fetch_all(sql, tuple(params))
+
+    where_sql = "WHERE 1=1"
     if product_name:
-        sql += " AND product_name = %s"
+        where_sql += " AND product_name = %s"
         params.append(product_name)
-    sql += " ORDER BY product_name, region, date"
+
+    sql = f"""
+    SELECT product_name, '河南' AS region, day_label AS date, ROUND(AVG(price), 2) AS price, MAX(unit) AS unit
+    FROM (
+      SELECT p.product_name, COALESCE(NULLIF(p.city, ''), p.region) AS area,
+             LEFT(p.date, 10) AS day_label, p.price, p.unit
+      FROM product_prices p
+      JOIN (
+        SELECT product_name, COALESCE(NULLIF(city, ''), region) AS area, LEFT(date, 10) AS day_label, MAX(id) AS id
+        FROM product_prices
+        {where_sql}
+        GROUP BY product_name, COALESCE(NULLIF(city, ''), region), LEFT(date, 10)
+      ) latest ON p.id = latest.id
+    ) daily_city_prices
+    GROUP BY product_name, day_label
+    ORDER BY product_name, day_label
+    """
     return fetch_all(sql, tuple(params))
 
 

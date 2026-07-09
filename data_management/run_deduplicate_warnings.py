@@ -13,9 +13,9 @@ def main() -> None:
     before = fetch_one("SELECT COUNT(*) AS count FROM warnings")["count"]
     duplicate_groups = fetch_all(
         """
-        SELECT url, risk_type, COUNT(*) AS count, MIN(id) AS keep_id
+        SELECT title, risk_type, COUNT(*) AS count, MAX(id) AS keep_id
         FROM warnings
-        GROUP BY url, risk_type
+        GROUP BY title, risk_type
         HAVING COUNT(*) > 1
         """
     )
@@ -27,9 +27,9 @@ def main() -> None:
                 cursor.execute(
                     """
                     DELETE FROM warnings
-                    WHERE url = %s AND risk_type = %s AND id <> %s
+                    WHERE title = %s AND risk_type = %s AND id <> %s
                     """,
-                    (group["url"], group["risk_type"], group["keep_id"]),
+                    (group["title"], group["risk_type"], group["keep_id"]),
                 )
                 deleted += cursor.rowcount
 

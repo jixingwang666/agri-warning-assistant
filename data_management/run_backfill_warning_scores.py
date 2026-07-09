@@ -5,8 +5,10 @@ from pathlib import Path
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = CURRENT_DIR.parent
 RISK_WARNING_DIR = PROJECT_DIR / "risk_warning"
+DATA_COLLECTION_DIR = PROJECT_DIR / "data_collection"
 
 sys.path.insert(0, str(CURRENT_DIR))
+sys.path.insert(0, str(DATA_COLLECTION_DIR))
 sys.path.insert(0, str(RISK_WARNING_DIR))
 
 from db import ensure_warning_score_columns
@@ -47,6 +49,9 @@ def main() -> None:
             "category": row.get("category", ""),
             "source": row.get("source", ""),
             "url": row.get("url", ""),
+            "evidence_score": row.get("evidence_score", 0),
+            "evidence_summary": row.get("evidence_summary", "") if row.get("evidence_links") else "",
+            "evidence_links": row.get("evidence_links", ""),
         }
         for row in warnings
     ]
@@ -64,8 +69,14 @@ def main() -> None:
                 "price_score": scored["price_score"],
                 "heat_score": scored["heat_score"],
                 "region_score": scored["region_score"],
+                "local_match_score": scored["local_match_score"],
+                "source_score": scored["source_score"],
+                "evidence_score": scored["evidence_score"],
+                "confidence": scored["confidence"],
                 "positive_adjustment": scored["positive_adjustment"],
                 "trigger_words": scored["trigger_words"],
+                "evidence_summary": scored["evidence_summary"],
+                "evidence_links": scored.get("evidence_links", row.get("evidence_links", "")),
             }
         )
 

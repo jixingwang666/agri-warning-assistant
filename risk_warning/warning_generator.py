@@ -4,6 +4,25 @@ from risk_rules import SUGGESTION_TEMPLATES
 from scorer import build_context_scores, score_news_item
 
 
+def has_warning_signal(record: dict) -> bool:
+    return any(
+        float(record.get(key, 0) or 0) > 0
+        for key in ("keyword_score", "price_score", "evidence_score")
+    )
+
+
+def mark_observation_record(record: dict) -> dict:
+    record["risk_type"] = "低风险观察"
+    record["risk_score"] = min(float(record.get("risk_score", 0) or 0), 15)
+    record["risk_level"] = "低风险"
+    record["confidence"] = min(float(record.get("confidence", 0) or 0), 45)
+    record["trigger_words"] = "未发现明显风险词"
+    record["evidence_summary"] = "未匹配到明确风险关键词、价格波动或本地旁证"
+    record["reason"] = "该农业新闻暂未识别到明确风险关键词，也未匹配到有效价格或气象旁证，系统保留为低风险观察记录。"
+    record["suggestion"] = "建议仅作日常关注，不触发预警处置；如后续出现气象、价格或病虫害旁证，再重新评估。"
+    return record
+
+
 def build_reason(record: dict) -> str:
     words = record["trigger_words"]
     region = record["region"] or "相关地区"
@@ -17,6 +36,8 @@ def build_reason(record: dict) -> str:
     if price_signal:
         change_rate = price_signal["change_rate"] * 100
         reason += f" 价格数据较前期变化约{change_rate:.1f}%，需结合市场情况继续观察。"
+    if record.get("evidence_summary"):
+        reason += f" 证据链摘要：{record['evidence_summary']}。"
     return reason
 
 
@@ -25,10 +46,13 @@ def generate_warnings(news_items: list[dict], price_changes: dict[tuple[str, str
     warnings = []
     for item in news_items:
         record = score_news_item(item, category_counter, region_counter, price_changes)
-        record["reason"] = build_reason(record)
-        record["suggestion"] = SUGGESTION_TEMPLATES.get(
-            record["risk_type"], SUGGESTION_TEMPLATES["综合风险"]
-        )
+        if not has_warning_signal(record):
+            record = mark_observation_record(record)
+        else:
+            record["reason"] = build_reason(record)
+            record["suggestion"] = SUGGESTION_TEMPLATES.get(
+                record["risk_type"], SUGGESTION_TEMPLATES["综合风险"]
+            )
         record.pop("price_signal", None)
         warnings.append(record)
 

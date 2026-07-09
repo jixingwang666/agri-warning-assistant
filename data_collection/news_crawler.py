@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable
 from urllib.parse import urljoin
+import warnings
 
 from cleaner import clean_text
 
@@ -45,11 +47,19 @@ class NewsCrawler:
     def crawl_sources(self, sources: Iterable[dict], limit_per_source: int = 10) -> CrawlResult:
         items: list[dict] = []
         errors: list[str] = []
-        for source in sources:
-            try:
-                items.extend(self.crawl_source(source, limit_per_source))
-            except Exception as exc:  # Keep one source failure from stopping the batch.
-                errors.append(f"{source.get('name', 'unknown')}: {exc}")
+        source_list = list(sources)
+        max_workers = min(max(len(source_list), 1), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self.crawl_source, source, limit_per_source): source
+                for source in source_list
+            }
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    items.extend(future.result())
+                except Exception as exc:  # Keep one source failure from stopping the batch.
+                    errors.append(f"{source.get('name', 'unknown')}: {exc}")
         return CrawlResult(items=items, errors=errors)
 
     def crawl_source(self, source: dict, limit: int = 10) -> list[dict]:
@@ -59,12 +69,16 @@ class NewsCrawler:
         except ImportError as exc:
             raise RuntimeError("网页爬虫需要安装 requests 和 beautifulsoup4。") from exc
 
-        response = requests.get(source["list_url"], timeout=self.timeout)
+        headers = {"User-Agent": "Mozilla/5.0 AgriWarningBot/1.0"}
+        verify_ssl = source.get("verify_ssl", True)
+        if not verify_ssl:
+            warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+        response = requests.get(source["list_url"], headers=headers, timeout=self.timeout, verify=verify_ssl)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, "html.parser")
 
-        links = self._extract_links(soup, source, limit)
+        links = self._extract_links(soup, source, max(limit * 2, limit))
         items = []
         for url, title in links:
             try:
@@ -72,6 +86,8 @@ class NewsCrawler:
                 if not item["title"]:
                     item["title"] = title
                 items.append(item)
+                if len(items) >= limit:
+                    break
             except Exception:
                 continue
         return items
@@ -127,7 +143,11 @@ class NewsCrawler:
         import requests
         from bs4 import BeautifulSoup
 
-        response = requests.get(url, timeout=self.timeout)
+        headers = {"User-Agent": "Mozilla/5.0 AgriWarningBot/1.0"}
+        verify_ssl = source.get("verify_ssl", True)
+        if not verify_ssl:
+            warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+        response = requests.get(url, headers=headers, timeout=self.timeout, verify=verify_ssl)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, "html.parser")

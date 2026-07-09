@@ -1,45 +1,64 @@
 @echo off
+setlocal
 title Agri Warning Assistant
+
+set "PROJECT_DIR=%~dp0"
+set "PYTHON_EXE=D:\Develop\Tools\agri-warning-venv\Scripts\python.exe"
+set "MYSQL_SERVICE=MySQL94"
+
+cd /d "%PROJECT_DIR%"
 
 echo ========================================
 echo   Agri Warning Assistant - Start All
 echo ========================================
 echo.
 
-REM --- Step 1: Start MySQL ---
-echo [1/4] Starting MySQL service...
-sc query MySQL80 | find "RUNNING" >nul
-if %errorlevel% neq 0 (
-    net start MySQL80 2>nul
-    if %errorlevel% neq 0 (
-        echo [ERROR] Cannot start MySQL. Run this script as Administrator.
-        echo Right-click start_all.bat - Run as Administrator
+if not exist "%PYTHON_EXE%" (
+    echo [ERROR] Python venv not found:
+    echo         %PYTHON_EXE%
+    pause
+    exit /b 1
+)
+
+echo [1/4] Checking MySQL service %MYSQL_SERVICE%...
+sc query %MYSQL_SERVICE% | findstr /I "RUNNING" >nul
+if errorlevel 1 (
+    net session >nul 2>&1
+    if errorlevel 1 (
+        echo   %MYSQL_SERVICE% is not running and Administrator permission is required.
+        echo   Requesting Administrator permission...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+        exit /b
+    )
+    echo   %MYSQL_SERVICE% is not running. Trying to start it...
+    net start %MYSQL_SERVICE% 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Cannot start %MYSQL_SERVICE%.
+        echo         Please run as Administrator or start manually:
+        echo         net start %MYSQL_SERVICE%
         pause
         exit /b 1
     )
 )
-echo   MySQL80 is running
+echo   %MYSQL_SERVICE% is running
 
-REM --- Step 2: Init Database ---
 echo.
 echo [2/4] Initializing database...
-python -m data_management.run_init_mysql
-if %errorlevel% neq 0 (
-    echo [WARNING] DB init failed. Check MySQL password in .env
+"%PYTHON_EXE%" -m data_management.run_init_mysql
+if errorlevel 1 (
+    echo [WARNING] DB init failed. Check Project\data_management\secrets.env
 )
 
-REM --- Step 3: Start Backend ---
 echo.
 echo [3/4] Starting backend on http://127.0.0.1:8000
-start "Agri-Backend" cmd /c "python -m uvicorn data_management.app:app --host 127.0.0.1 --port 8000"
+start "Agri Warning Backend" cmd /k ""%PYTHON_EXE%" -m uvicorn data_management.app:app --host 127.0.0.1 --port 8000"
 
 echo   Waiting for backend...
 timeout /t 5 /nobreak >nul
 
-REM --- Step 4: Start Frontend ---
 echo.
 echo [4/4] Starting frontend on http://127.0.0.1:5173
-start "Agri-Frontend" cmd /c "python -m http.server 5173 -d frontend"
+start "Agri Warning Frontend" cmd /k ""%PYTHON_EXE%" -m http.server 5173 -d frontend"
 
 echo.
 echo ========================================
@@ -49,7 +68,7 @@ echo   Frontend : http://127.0.0.1:5173
 echo   API Docs : http://127.0.0.1:8000/docs
 echo   Login    : admin / 123456
 echo.
-echo   Test guide: docs\test_guide.md
+echo   Config   : data_management\secrets.env
 echo ========================================
 echo.
 start http://127.0.0.1:5173
