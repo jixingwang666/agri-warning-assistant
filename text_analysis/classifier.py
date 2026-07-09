@@ -9,6 +9,10 @@ CATEGORY_KEYWORDS = {
 
 VALID_CATEGORIES = set(CATEGORY_KEYWORDS.keys()) | {"其他"}
 
+# 本地模型置信度门控阈值：规则弃权后，模型预测低于该值也仍采用（此时模型是
+# 唯一信号），但 OOD 输入直接跳过模型，避免过度自信的错误（见 test_2_model.md）。
+MODEL_CONF_THRESHOLD = 0.60
+
 
 def classify_news_rule(title: str, content: str) -> str:
     """Rule-based classification using keyword counting (original method)."""
@@ -21,12 +25,43 @@ def classify_news_rule(title: str, content: str) -> str:
     return category if score > 0 else "其他"
 
 
+def classify_news_offline(title: str, content: str) -> str:
+    """离线分类：规则优先(对真实新闻更可靠) → 模型兜底(规则弃权时) → 其他。
+
+    依据 test_results/test_2_model.md 的结论调整链路(ISSUE-MD-005)：
+    - 真实新闻文章关键词密集，规则准确率(73%)远高于本地模型(40%)，故规则命中
+      直接返回，可避免模型「农业政策」高置信误判(ISSUE-MD-002)。
+    - AgriCHN 式短文本关键词稀疏，规则弃权(其他)，此时改用本地模型(61%)兜底。
+    - OOD 输入(纯英文/符号/空)跳过模型，避免过度自信的错误(ISSUE-MD-003)。
+    """
+    # 规则优先：命中即返回（真实新闻文章上规则更可靠）。
+    rule_pred = classify_news_rule(title, content)
+    if rule_pred != "其他":
+        return rule_pred
+
+    # 规则弃权：短文本/关键词稀疏，改用本地模型（非 OOD 时）。
+    try:
+        from inference import classify_with_confidence, is_ood  # noqa: F811
+
+        if not is_ood(title, content):
+            result = classify_with_confidence(title, content)
+            if result and result.get("category") in VALID_CATEGORIES:
+                # 规则已弃权，模型是唯一信号；置信度仅作日志/调参参考。
+                if result["confidence"] >= MODEL_CONF_THRESHOLD:
+                    return result["category"]
+                return result["category"]
+    except Exception:
+        pass
+
+    return "其他"
+
+
 def classify_news(title: str, content: str, use_llm: bool = True) -> str:
     """Classify news article. Two modes:
 
     Online  (LLM enabled):  DeepSeek only — best quality, zero-shot.
                              Falls back to offline mode on failure.
-    Offline (no LLM):       BERT model → rule keywords (last resort).
+    Offline (no LLM):       规则优先 → 本地模型(置信度门控) → 其他。
 
     Args:
         title: News title
@@ -44,14 +79,6 @@ def classify_news(title: str, content: str, use_llm: bool = True) -> str:
             pass
         # LLM 失败或不可用，降级到离线模式（继续往下走）
 
-    # 离线模式: 本地 BERT 模型 → 规则关键词
-    try:
-        from inference import classify_news_model  # noqa: F811
-        pred = classify_news_model(title, content)
-        if pred and pred in VALID_CATEGORIES:
-            return pred
-    except Exception:
-        pass
-
-    return classify_news_rule(title, content)
+    # 离线模式: 规则优先 → 本地模型 → 其他
+    return classify_news_offline(title, content)
 

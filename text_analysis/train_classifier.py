@@ -41,6 +41,25 @@ def load_jsonl(data_dir: Path, split: str) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_realnews(data_dir: Path, oversample: int = 5) -> list[dict]:
+    """Load LLM-labeled real-news samples (built by build_realnews_dataset.py).
+
+    Real-news samples fix the train/inference distribution mismatch
+    (test_results/test_2_model.md, ISSUE-MD-001). They usually start scarce, so
+    they are oversampled to carry weight against the large AgriCHN corpus.
+    """
+    path = data_dir / "realnews_single.json"
+    if not path.exists():
+        print("  [info] realnews_single.json not found; training on AgriCHN only.")
+        return []
+    samples = json.loads(path.read_text(encoding="utf-8"))
+    if not samples:
+        return []
+    expanded = samples * max(1, oversample)
+    print(f"  [info] merged {len(samples)} real-news samples x{oversample} = {len(expanded)}")
+    return expanded
+
+
 def build_dataset(samples: list[dict], tokenizer, label2id: dict[str, int]) -> Dataset:
     """Convert samples to HuggingFace Dataset with tokenization."""
     texts = [s["text"] for s in samples]
@@ -64,6 +83,7 @@ def build_dataset(samples: list[dict], tokenizer, label2id: dict[str, int]) -> D
 def train(data_dir: Path, output_dir: Path) -> None:
     print("Loading data...")
     train_samples = load_jsonl(data_dir, "train")
+    train_samples = train_samples + load_realnews(data_dir)
     dev_samples = load_jsonl(data_dir, "dev")
     test_samples = load_jsonl(data_dir, "test")
 

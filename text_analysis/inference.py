@@ -24,6 +24,34 @@ _model_type = None  # "bert" | "textcnn" | None
 _max_seq_len = 256
 
 
+def _weighted_text(title: str, content: str) -> str:
+    """Build model input with the title emphasized.
+
+    The model was trained on short sentences, so repeating the (short) title in
+    front of the article body biases attention toward the most informative,
+    in-distribution signal and reduces full-article dilution.
+    """
+    title = (title or "").strip()
+    content = (content or "").strip()
+    if title:
+        return f"{title}。{title}。{content}"
+    return content
+
+
+def is_ood(title: str, content: str) -> bool:
+    """Heuristic out-of-distribution check for the Chinese ag classifier.
+
+    True for empty/near-empty text or text that is mostly non-Chinese
+    (pure English/symbols) — cases where the model produces overconfident
+    garbage (see test_results/test_2_model.md, ISSUE-MD-003).
+    """
+    text = f"{title} {content}".strip()
+    if len(text) < 4:
+        return True
+    chinese = sum(1 for ch in text if "一" <= ch <= "鿿")
+    return chinese / len(text) < 0.2
+
+
 def _load_bert_model():
     """Lazy-load the fine-tuned BERT model."""
     global _model, _tokenizer, _label2id, _id2label, _model_type, _max_seq_len
@@ -107,7 +135,7 @@ def classify_news_model(title: str, content: str) -> str | None:
     if not _load_model():
         return None
 
-    text = f"{title} {content}"
+    text = _weighted_text(title, content)
 
     if _model_type == "bert":
         import torch
@@ -144,11 +172,15 @@ def classify_with_confidence(title: str, content: str) -> dict | None:
 
     Returns {"category": str, "confidence": float, "scores": {label: prob}}
     or None if no model available.
+
+    The title is duplicated ahead of the content ("title weighting"): the model
+    was fine-tuned on short AgriCHN sentences, so emphasizing the (short) title
+    keeps full-article inputs closer to the training distribution.
     """
     if not _load_model():
         return None
 
-    text = f"{title} {content}"
+    text = _weighted_text(title, content)
 
     if _model_type == "bert":
         import torch

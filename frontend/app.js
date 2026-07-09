@@ -21,6 +21,7 @@ const app = createApp({
       selectedNews: null,
       uploadFile: null,
       uploadResult: "",
+      searchKeywords: "",
       filters: { keyword: "", category: "", region: "" },
       warningFilters: { risk_level: "", region: "", product: "" },
       priceFilters: { product_name: "", region: "" },
@@ -142,6 +143,21 @@ const app = createApp({
         this.error = `联网更新完成：抓取 ${result.crawled} 条，保存新闻 ${result.news_saved} 条，生成预警 ${result.warnings_saved} 条。`;
       } catch (err) {
         this.error = `联网更新失败：${err.message}`;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async searchCrawl() {
+      this.loading = true;
+      this.error = "";
+      try {
+        const kw = encodeURIComponent(this.searchKeywords.trim());
+        const url = `/api/crawl/search?limit_per_query=5${kw ? `&keywords=${kw}` : ""}`;
+        const result = await this.request(url, { method: "POST" });
+        await this.refreshAll();
+        this.error = `关键词采集完成：抓取 ${result.crawled} 条，保存新闻 ${result.news_saved} 条，生成预警 ${result.warnings_saved} 条。`;
+      } catch (err) {
+        this.error = `关键词采集失败：${err.message}`;
       } finally {
         this.loading = false;
       }

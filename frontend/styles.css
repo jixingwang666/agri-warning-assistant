@@ -150,6 +150,14 @@ p { line-height: 1.65; }
   gap: 10px;
 }
 
+.keyword-input {
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  min-width: 180px;
+}
+
 .primary, .secondary {
   height: 38px;
   padding: 0 16px;
